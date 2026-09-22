@@ -1,41 +1,85 @@
-# 🚀 100% Free Automated YouTube Shorts Generator
+# 🚀 Ultimate YouTube Shorts Creation Suite
 
-A fully automated, zero-cost pipeline designed to generate high-retention, royalty-free YouTube Shorts ready for daily uploading.
+A fully automated, zero-cost pipeline designed to generate high-retention, viral YouTube Shorts.
 
----
-
-## 💡 Why This is 100% Free (Zero Subscriptions)
-
-Unlike expensive SaaS tools ($30–$50/mo), this entire pipeline runs locally on your machine with zero fees:
-1. **Voiceovers:** Powered by **Microsoft Azure Neural TTS** (via `edge-tts`) — realistic, human-like narration without any API keys or subscriptions.
-2. **Visuals:** Automatically retrieves public-domain and Creative Commons stock imagery from **Wikimedia Commons** and **Pexels** (with procedural gradient fallbacks if offline).
-3. **Subtitles:** Frame-accurate animated **karaoke-style ASS subtitles** highlighting words as they are spoken.
-4. **Video Engine:** High-performance **FFmpeg** rendering with smooth Ken Burns cinematic zooms and audio ducking.
+Contains two powerful engines:
+1. **🔥 Viral Creator Clipper (`clipper.py`)**: Automatically extracts viral moments from popular content creators & podcasters (MrBeast, Joe Rogan, Andrew Huberman, Kai Cenat, etc.) and formats them into 9:16 vertical Shorts with animated captions.
+2. **💡 Faceless AI Generator (`generate.py`)**: Generates faceless curiosity/explainer Shorts from scratch using Microsoft Azure Neural TTS, stock footage, and ambient music.
 
 ---
 
-## 🛠️ Quick Start
+## ⚡ Quick Start: Viral Creator Clipper (`clipper.py`)
 
-### 1. Run with `uv` (Recommended — zero manual setup)
-`uv` automatically installs dependencies and runs the script in an isolated sandbox:
+### 1. View Supported Creators (26+ Channels & Aliases)
+```powershell
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py --list-creators
+```
+Supported presets include: `rogan`, `mrbeast`, `huberman`, `theovon`, `kaicenat` (`kai`), `speed` (`ishowspeed`), `caseoh`, `penguinz0` (`charlie`), `hormozi`, `flagrant` (`schulz`), `pbd`, `rawtalk`, `xqc`, `sketch`, `jocko`, `fullsend`, `mkbhd`, `impacttheory`, `asmongold` (`asmon`), `lexfridman`, `modernwisdom`, `diaryofaceo`, `jordanpeterson`, `impaulsive`, `markrober`, `veritasium`.
+
+### 2. Auto-Clip Hilarious & Viral Stream Moments (`--funny`)
+Searches for top-viewed stream reactions, rage moments, and funny compilations with conversational context snapping:
 
 ```powershell
-cd C:\Users\jpsh9\.gemini\antigravity\scratch\shorts_generator
+# Automatically clip the funniest moment from Kai Cenat:
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py --creator kai --funny --duration 30
 
-# Generate the first test Short:
-& "C:\Users\jpsh9\.local\bin\uv.exe" run python generate.py
+# Clip IShowSpeed's wildest stream moments:
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py --creator speed --funny --duration 30
 
-# Batch generate all 5 preloaded viral Shorts:
-& "C:\Users\jpsh9\.local\bin\uv.exe" run python generate.py --batch scripts.json
+# Clip CaseOh's funniest moments:
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py --creator caseoh --funny --duration 25
 ```
 
-### 2. Generate a Custom One-Off Short
+### 3. Search Specific Themes or Moments (`--query`)
+Target exact topics, guests, or funny moments across any creator:
+
 ```powershell
-& "C:\Users\jpsh9\.local\bin\uv.exe" run python generate.py `
-  --text "Did you know that honey never spoils? Archaeologists have found pots of honey in ancient Egyptian tombs that are over three thousand years old and still perfectly edible." `
-  --keywords "ancient egypt pyramids, golden honey jar, archeology tomb" `
-  --title "The Only Food That Never Spoils 🍯 #shorts #facts"
+# Search CaseOh desk slam rage:
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py --creator caseoh --query "rage" --duration 25
+
+# Search Joe Rogan alien conspiracy debates:
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py --creator rogan --query "alien conspiracy" --duration 35
 ```
+
+### 4. Auto-Clip ANY YouTube Video or Podcast URL
+Pass any YouTube URL and let the algorithm locate the peak viral moment:
+
+```powershell
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python clipper.py `
+  --url "https://www.youtube.com/watch?v=DuRcrbP3kag" `
+  --auto `
+  --count 1 `
+  --duration 35
+```
+
+### 5. Automated 7-Day Batch Schedule (`batch_7_shorts.py`)
+Produces a complete week of Shorts from 7 different top creators in minutes:
+
+```powershell
+& "C:\Users\jpsh9\.local\bin\uv.exe" run python batch_7_shorts.py
+```
+
+---
+
+## 🎨 Vertical Layout Framing Options
+
+| Layout | Description | Best For |
+|---|---|---|
+| `--layout blur_bg` (Default) | Sharp 16:9 video centered with a 1080x1920 blurred background. Never crops faces or visual context. | Universal (Streamers, Podcasts, Gaming) |
+| `--layout split_podcast` | Splits landscape video in half: Host on top, Guest on bottom (stacked 1080x960 each). | Wide 2-shot interviews |
+| `--layout face_crop` | Direct 9:16 vertical crop centered on the frame. | Solo talking heads, monologues |
+
+---
+
+## 📝 High-Retention Features Built-In
+
+1. **Conversational Context Snapping**: Snaps clip start timestamps to natural sentence beginnings so the Short never starts mid-word or without context.
+2. **Zero-Lag Subtitles (`CAPTION_LEAD_OFFSET = 0.38s`)**: Dynamic word-by-word karaoke captions with vocal hit synchronization and safe-zone positioning (`Y=1350`).
+3. **YouTube Heatmap Analysis**: Identifies exact timestamps where millions of viewers repeatedly replayed the video.
+4. **Lightning-Fast Stream Range Slicing**: Downloads *only* the required 30-50s slice in seconds via stream range slicing without downloading full multi-gigabyte videos.
+5. **Dynamic Hook Card**: Auto-generates bold upper banner cards (`Y=240`) based on discussion topic or opening setup sentence.
+6. **Loudness Normalization**: FFmpeg EBU R128 (`loudnorm`) filter so speech sounds loud and punchy on mobile speakers.
+7. **Auto SEO Metadata**: Generates companion `_metadata.txt` with title, hashtags, description, and creator attribution.
 
 ---
 
@@ -44,58 +88,17 @@ cd C:\Users\jpsh9\.gemini\antigravity\scratch\shorts_generator
 ```
 shorts_generator/
 │
-├── generate.py           # Main CLI runner (single or batch)
-├── config.py             # Colors, font sizes, resolution (1080x1920), voices
-├── tts_engine.py         # Free neural voice synthesis + word timestamps
-├── subtitles.py          # Dynamic karaoke ASS subtitle generator
-├── compositor.py         # FFmpeg video editor (zoom, audio ducking, sub burn)
-├── stock_media.py        # Royalty-free Wikimedia/Pexels image search
-├── audio_ambient.py      # Procedural ambient background pad generator
-├── scripts.json          # Batch list of scripts to produce
+├── clipper.py            # Main CLI runner for Viral Creator Clipper
+├── clip_detector.py      # Heatmap analyzer, comedy scorer & context snappper
+├── clip_downloader.py    # Stream range slice downloader (yt-dlp + FFmpeg)
+├── clip_compositor.py    # 9:16 vertical layout engine (blur_bg, split_podcast, etc.)
+├── clip_subtitles.py     # High-retention zero-lag karaoke ASS subtitle generator
+├── creators.py           # 26 popular creator channels registry & alias resolver
+├── batch_7_shorts.py     # Automated 7-day batch generator
 │
-├── assets/
-│   ├── images/           # Drop your own custom JPG/PNG files here (optional)
-│   └── music/            # Drop free royalty-free MP3/WAV tracks here (optional)
+├── generate.py           # Faceless AI short generator (TTS + Stock media)
+├── config.py             # Global resolution, fonts, colors, paths
 │
-└── output/               # Generated MP4 videos + YouTube metadata (.txt)
+└── output/
+    └── clips/            # Rendered 1080x1920 MP4 Shorts + companion metadata .txt
 ```
-
----
-
-## 🤖 The "30-Day Batch" Script Prompt (For ChatGPT or Gemini)
-
-Copy and paste this prompt into free ChatGPT or Gemini to generate 15 to 30 scripts formatted directly for `scripts.json`:
-
-```text
-Act as a YouTube Shorts viral retention expert. Write 5 high-hook scripts (30 to 45 seconds each, 70-85 words) about mind-blowing paradoxes or bizarre facts.
-
-Rules:
-1. Hook (0-3s): State a counter-intuitive claim or question immediately.
-2. Body (3-25s): Deliver 2-3 fast facts with zero filler words.
-3. Loop (last 3s): Make the final sentence connect seamlessly back to the opening line.
-4. Output in valid JSON format matching this schema:
-[
-  {
-    "id": "short_slug_name",
-    "title": "Clickable YouTube Title with 1-2 Emojis and #shorts",
-    "description": "2-line YouTube description with tags",
-    "text": "The exact spoken script here.",
-    "keywords": ["keyword 1", "keyword 2", "keyword 3", "keyword 4"]
-  }
-]
-```
-
----
-
-## 📅 The Daily Upload Strategy (15 Minutes Once a Week)
-
-1. **Sunday Evening:** Run the batch generator to create 7 videos into the `output/` folder.
-2. **Open YouTube Studio:** (studio.youtube.com)
-3. **Bulk Upload:** Drag all 7 `.mp4` files into the upload window.
-4. **Copy Metadata:** Open the companion `_metadata.txt` file generated for each video, paste the title and description.
-5. **Schedule:**
-   - Video 1 -> Monday at 1:00 PM (or your peak time)
-   - Video 2 -> Tuesday at 1:00 PM
-   - Video 3 -> Wednesday at 1:00 PM
-   - ...and so on.
-6. Done! Your channel runs on autopilot for the entire week.

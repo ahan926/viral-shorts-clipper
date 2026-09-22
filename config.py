@@ -1,6 +1,21 @@
 import os
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
+import imageio_ffmpeg
+
+# Ensure ffmpeg.exe exists and is in system PATH for yt-dlp & subprocess
+_ffmpeg_exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
+_bin_dir = _ffmpeg_exe.parent
+_std_ffmpeg = _bin_dir / "ffmpeg.exe"
+if not _std_ffmpeg.exists():
+    try:
+        shutil.copyfile(_ffmpeg_exe, _std_ffmpeg)
+    except Exception:
+        pass
+_bin_dir_str = str(_bin_dir.resolve())
+if _bin_dir_str not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _bin_dir_str + os.pathsep + os.environ.get("PATH", "")
 
 # Base Paths
 BASE_DIR = Path(__file__).parent.resolve()
@@ -60,3 +75,27 @@ SUBTITLE_MARGIN_V = 960
 
 # Background Audio
 MUSIC_VOLUME = 0.10  # 10% volume (ducked under voiceover)
+
+# ==========================================
+# Viral Clipper Settings
+# ==========================================
+CLIPS_OUTPUT_DIR = OUTPUT_DIR / "clips"
+CLIPS_CACHE_DIR = CACHE_DIR / "clips"
+for p in [CLIPS_OUTPUT_DIR, CLIPS_CACHE_DIR]:
+    p.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_CLIP_LAYOUT = "blur_bg"       # "blur_bg", "split_podcast", "face_crop"
+DEFAULT_CLIP_DURATION = 35           # 30 to 45 seconds optimal for Shorts retention
+MIN_CLIP_DURATION = 20
+MAX_CLIP_DURATION = 60
+
+# Clipper Subtitle Styling (Positioned in safe lower focus zone above mobile UI)
+CLIP_SUBTITLE_POS_X = 540
+CLIP_SUBTITLE_POS_Y = 1350            # Safe zone: above mobile Shorts UI, below 16:9 frame
+CLIP_SUBTITLE_FONT_SIZE = 62          # Bold, high-retention mobile font size
+CAPTION_LEAD_OFFSET = 0.38            # Lead time in seconds so captions trigger on speech beat
+
+# Hook Banner Styling
+HOOK_FONT = "Impact"
+HOOK_FONT_SIZE = 48
+HOOK_POS_Y = 240                      # Clean upper card position
