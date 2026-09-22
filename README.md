@@ -1,10 +1,6 @@
-# 🚀 Ultimate YouTube Shorts Creation Suite
+# 🔥 Viral Creator YouTube Shorts Clipper
 
-A fully automated, zero-cost pipeline designed to generate high-retention, viral YouTube Shorts.
-
-Contains two powerful engines:
-1. **🔥 Viral Creator Clipper (`clipper.py`)**: Automatically extracts viral moments from popular content creators & podcasters (MrBeast, Joe Rogan, Andrew Huberman, Kai Cenat, etc.) and formats them into 9:16 vertical Shorts with animated captions.
-2. **💡 Faceless AI Generator (`generate.py`)**: Generates faceless curiosity/explainer Shorts from scratch using Microsoft Azure Neural TTS, stock footage, and ambient music.
+A fully automated, zero-cost Python pipeline that turns viral moments from popular content creators, podcasters, and Twitch/YouTube streamers (Kai Cenat, IShowSpeed, CaseOh, Joe Rogan, Andrew Huberman, Asmongold, etc.) into high-retention 9:16 vertical YouTube Shorts with dynamic animated captions.
 
 ---
 
