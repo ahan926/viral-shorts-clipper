@@ -21,10 +21,11 @@ from config import (
     DEFAULT_CLIP_LAYOUT,
     DEFAULT_CLIP_DURATION,
     CLIP_SUBTITLE_POS_Y,
+    MAX_STREAMER_VIDEO_DURATION,
 )
 import yt_dlp
 from creators import get_creator, list_creators, CREATOR_REGISTRY
-from clip_detector import extract_video_info, get_viral_segments
+from clip_detector import extract_video_info, get_viral_segments, generate_smart_hook, truncate_word_safe
 from clip_downloader import download_video_segment, trim_local_video
 from clip_subtitles import extract_subtitles_from_youtube, generate_clip_ass_subtitles
 from clip_compositor import compose_short_clip
@@ -45,10 +46,10 @@ def slugify(text: str) -> str:
     text = re.sub(r"[^\w\s-]", "", text).strip().lower()
     return re.sub(r"[-\s]+", "_", text)[:40]
 
-def search_viral_video(query: str, min_duration: float = 90.0, max_duration: float = 5400.0) -> Dict[str, Any]:
+def search_viral_video(query: str, min_duration: float = 25.0, max_duration: float = 1500.0) -> Dict[str, Any]:
     """
     Searches YouTube for viral clips, compilations, or stream highlights matching a query.
-    Filters out sponsored ads and live streams, prioritizing high view counts and strong viral engagement.
+    Filters out sponsored ads, live streams, and multi-hour unedited VODs, prioritizing high viral comedy engagement.
     """
     print(f"🔎 Searching YouTube for viral content: '{query}'...")
     ydl_opts = {
@@ -58,14 +59,14 @@ def search_viral_video(query: str, min_duration: float = 90.0, max_duration: flo
         "extract_flat": True
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        res = ydl.extract_info(f"ytsearch8:{query}", download=False)
+        res = ydl.extract_info(f"ytsearch10:{query}", download=False)
         entries = res.get("entries") or []
         if not entries:
             raise ValueError(f"No viral videos found matching query: '{query}'")
 
         # Score candidates
         candidates = []
-        boring_ad_words = ["#ad", "#sponsored", "#partner", "trailer", "teaser"]
+        boring_ad_words = ["#ad", "#sponsored", "#partner", "trailer", "teaser", "podcast ep", "full stream vod"]
         for e in entries:
             t = e.get("title", "")
             t_lower = t.lower()
@@ -77,10 +78,12 @@ def search_viral_video(query: str, min_duration: float = 90.0, max_duration: flo
             if dur < min_duration or dur > max_duration:
                 continue
 
-            # Prefer titles mentioning funny/viral/rage/highlights
+            # Prioritize high comedy/reaction keywords
             viral_score = views
-            if any(w in t_lower for w in ["funny", "hilarious", "rage", "stream", "reaction", "fails", "moments"]):
-                viral_score *= 1.5
+            comedy_signals = ["funny", "hilarious", "loses it", "laughing", "rage", "reaction", "fails", "moments", "try not to laugh", "best"]
+            for sig in comedy_signals:
+                if sig in t_lower:
+                    viral_score *= 1.35
 
             candidates.append({"entry": e, "score": viral_score})
 
@@ -94,12 +97,15 @@ def search_viral_video(query: str, min_duration: float = 90.0, max_duration: flo
         print(f"   ✨ Selected: '{chosen_title}'")
         return chosen
 
-def get_latest_creator_video(channel_url: str) -> Dict[str, Any]:
-    """Retrieves the best recent video from a creator's channel, filtering out ads and shorts."""
+def get_latest_creator_video(channel_url: str, max_duration: float = 1800.0) -> Dict[str, Any]:
+    """
+    Retrieves the best recent video from a creator's channel.
+    Filters out 4+ hour raw stream archives, ads, and shorts to find edited reactions/highlights.
+    """
     print(f"🔍 Inspecting recent uploads from creator channel: {channel_url}...")
     ydl_opts = {
         "skip_download": True,
-        "playlist_items": "1-5",
+        "playlist_items": "1-12",
         "quiet": True,
         "no_warnings": True,
         "extract_flat": True
@@ -111,10 +117,18 @@ def get_latest_creator_video(channel_url: str) -> Dict[str, Any]:
             raise ValueError(f"No videos found for channel {channel_url}")
 
         boring_words = ["#ad", "#sponsored", "#partner", "trailer", "announcement"]
+        valid_entries = []
         for e in entries:
             t_lower = (e.get("title") or "").lower()
-            if not any(b in t_lower for b in boring_words):
-                return e
+            dur = float(e.get("duration") or 0.0)
+            if any(b in t_lower for b in boring_words):
+                continue
+            # Filter out multi-hour raw stream grinds (> 30 mins)
+            if 45.0 <= dur <= max_duration:
+                valid_entries.append(e)
+
+        if valid_entries:
+            return valid_entries[0]
         return entries[0]
 
 def get_entertaining_creator_video(
@@ -136,13 +150,19 @@ def get_entertaining_creator_video(
         return search_viral_video(f"{c_name} {query}")
 
     # 2. Funny / Streamer mode: search for top viral stream highlights & funny compilations
-    if (funny_mode or is_streamer) and not recent_only:
-        try:
-            return search_viral_video(f"{c_name} funniest viral stream moments reaction")
-        except Exception:
-            pass
+    if funny_mode or is_streamer:
+        if recent_only:
+            try:
+                return search_viral_video(f"{c_name} recent funniest stream moments reaction", max_duration=1800.0)
+            except Exception:
+                pass
+        else:
+            try:
+                return search_viral_video(f"{c_name} funniest viral stream moments reaction", max_duration=1500.0)
+            except Exception:
+                pass
 
-    # 3. Channel uploads inspection
+    # 3. Channel uploads inspection (filtering out 4-hour raw stream VODs)
     return get_latest_creator_video(creator_data["channel_url"])
 
 def generate_metadata_file(
@@ -209,22 +229,25 @@ def process_single_clip(
     sub_path = None
     if with_subtitles and video_id:
         print("📝 Fetching transcript & generating dynamic subtitles...")
-        words = extract_subtitles_from_youtube(video_id, start_sec, end_sec)
+        words = extract_subtitles_from_youtube(video_id, start_sec, end_sec, local_clip_path=raw_clip_path)
         if words:
             sub_path = work_dir / "clip_subtitles.ass"
             # Set subtitle position in safe zone (Y=1350) or user override
             target_pos_y = sub_y if sub_y is not None else CLIP_SUBTITLE_POS_Y
-            generate_clip_ass_subtitles(words, sub_path, pos_y=target_pos_y, words_per_phrase=3)
+            generate_clip_ass_subtitles(words, sub_path, pos_y=target_pos_y, words_per_phrase=2)
             print(f"   Generated {len(words)} animated subtitle words!")
         else:
             print("   (No captions available for this segment — continuing without subtitles)")
 
     # 3. Determine Hook Text
     if not hook_text:
-        if creator_data:
-            hook_text = f"{creator_data['name'].upper()}: {raw_title[:28]}"
-        else:
-            hook_text = raw_title[:32].upper()
+        is_comedy = creator_data and any(c in creator_data.get("category", "") for c in ["Streaming", "Gaming", "Comedy"])
+        hook_text = generate_smart_hook(
+            video_title=raw_title,
+            creator_name=creator_data["name"] if creator_data else None,
+            context_text=None,
+            mode="funny" if is_comedy else "viral"
+        )
 
     # 4. Compose Vertical 9:16 Short
     final_output = CLIPS_OUTPUT_DIR / f"{slug}.mp4"
@@ -374,9 +397,13 @@ def main():
     # Generate Shorts
     created_shorts = []
     for seg in segments:
-        topic_hook = args.hook or seg.get("title") or seg.get("context_text")
-        if not topic_hook and creator_data:
-            topic_hook = f"{creator_data['name'].upper()}: {raw_title[:28]}"
+        raw_hook = args.hook or seg.get("title") or seg.get("context_text")
+        topic_hook = generate_smart_hook(
+            video_title=raw_title,
+            creator_name=creator_data["name"] if creator_data else None,
+            context_text=raw_hook,
+            mode=detect_mode
+        )
 
         out_mp4 = process_single_clip(
             url=url,

@@ -4,6 +4,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 import imageio_ffmpeg
 
+import sys
+
+# Ensure UTF-8 output on Windows consoles across all modules
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Ensure ffmpeg.exe exists and is in system PATH for yt-dlp & subprocess
 _ffmpeg_exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
 _bin_dir = _ffmpeg_exe.parent
@@ -89,13 +99,20 @@ DEFAULT_CLIP_DURATION = 35           # 30 to 45 seconds optimal for Shorts reten
 MIN_CLIP_DURATION = 20
 MAX_CLIP_DURATION = 60
 
+# Video Sourcing Constraints
+# Streamers (Asmon, Speed, Kai, CaseOh) stream for 4-8 hours; VODs > 25 mins are raw unedited grinds.
+# True viral comedy/reaction shorts come from curated 1.5 - 25 minute clips/reactions.
+MAX_STREAMER_VIDEO_DURATION = 1500.0  # 25 minutes max for streamer comedy search
+MIN_STREAMER_VIDEO_DURATION = 30.0    # At least 30 seconds
+
 # Clipper Subtitle Styling (Positioned in safe lower focus zone above mobile UI)
 CLIP_SUBTITLE_POS_X = 540
 CLIP_SUBTITLE_POS_Y = 1350            # Safe zone: above mobile Shorts UI, below 16:9 frame
 CLIP_SUBTITLE_FONT_SIZE = 62          # Bold, high-retention mobile font size
 CAPTION_LEAD_OFFSET = 0.38            # Lead time in seconds so captions trigger on speech beat
 
-# Hook Banner Styling
+# Hook Banner Styling (Centered in upper safe zone: Y=200..260)
 HOOK_FONT = "Impact"
-HOOK_FONT_SIZE = 48
-HOOK_POS_Y = 240                      # Clean upper card position
+HOOK_FONT_SIZE = 44                   # Base font size
+HOOK_POS_Y = 220                      # Clean upper card position
+HOOK_MAX_CHARS = 48                   # Maximum characters before word-boundary wrap

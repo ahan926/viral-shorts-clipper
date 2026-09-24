@@ -5,8 +5,10 @@ and compiles modern ASS karaoke-style subtitles for mobile Shorts.
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import re
+import json
 from youtube_transcript_api import YouTubeTranscriptApi
 from config import (
+    CACHE_DIR,
     VIDEO_WIDTH,
     VIDEO_HEIGHT,
     SUBTITLE_FONT,
@@ -37,18 +39,17 @@ def clean_word(word: str) -> str:
     """Clean punctuation while retaining emphasis."""
     return re.sub(r"[^\w\s'$%!\?]", "", word).strip()
 
-def extract_subtitles_from_youtube(
-    video_id: str,
-    clip_start_sec: float,
-    clip_end_sec: float
-) -> List[Dict[str, Any]]:
-    """
-    Fetches official or auto-generated YouTube subtitles and extracts word-level timings
-    relative to the clip's start time (0.0s = clip_start_sec).
-    """
+def get_cached_or_fetch_transcript(video_id: str) -> List[Dict[str, Any]]:
+    """Retrieves full transcript from local cache or YouTube API."""
+    cache_file = CACHE_DIR / "transcripts" / f"{video_id}.json"
+    if cache_file.exists():
+        try:
+            return json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
     try:
         api = YouTubeTranscriptApi()
-        # Try english transcripts (manual or auto-generated)
         transcript_list = api.list(video_id)
         transcript = None
         for t in transcript_list:
@@ -56,84 +57,48 @@ def extract_subtitles_from_youtube(
                 transcript = t.fetch()
                 break
         if not transcript:
-            # Fallback to any first transcript
             all_transcripts = list(transcript_list)
             if all_transcripts:
                 transcript = all_transcripts[0].fetch()
 
-        if not transcript:
-            return []
+        if transcript:
+            data = [
+                {
+                    "start": float(x.start),
+                    "dur": float(x.duration),
+                    "text": x.text.replace("\n", " ").strip()
+                }
+                for x in transcript
+            ]
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(data), encoding="utf-8")
+            return data
+    except Exception as e:
+        pass
+    return []
 
-        raw_snippets = []
-        for item in transcript:
-            snippet_start = float(item.start)
-            snippet_dur = float(item.duration)
-            snippet_end = snippet_start + snippet_dur
-
-            # Check overlap with clip window
-            if snippet_end < clip_start_sec or snippet_start > clip_end_sec:
-                continue
-
-            raw_text = item.text.replace("\n", " ").strip()
-            raw_text = re.sub(r"\[.*?\]", "", raw_text).strip()
-            raw_text = re.sub(r"^\s*-\s*", "", raw_text).strip()
-            if not raw_text:
-                continue
-
-            raw_snippets.append({
-                "start": snippet_start,
-                "dur": snippet_dur,
-                "text": raw_text
-            })
-
-        if not raw_snippets:
-            return []
-
-        # Sort snippets chronologically
-        raw_snippets.sort(key=lambda s: s["start"])
-
-        # Truncate overlapping ends across consecutive snippets
-        # YouTube auto-captions overlap each snippet by 1-2 seconds; this prevents overlapping text
-        for i in range(len(raw_snippets)):
-            st = raw_snippets[i]["start"]
-            if i + 1 < len(raw_snippets):
-                raw_snippets[i]["end"] = min(st + raw_snippets[i]["dur"], raw_snippets[i + 1]["start"])
-            else:
-                raw_snippets[i]["end"] = st + raw_snippets[i]["dur"]
-            if raw_snippets[i]["end"] <= st:
-                raw_snippets[i]["end"] = st + 0.5
-
-        clip_duration = clip_end_sec - clip_start_sec
+def extract_subtitles_with_whisper(media_path: Path) -> List[Dict[str, Any]]:
+    """Transcribes media file locally using faster-whisper with word-level accuracy."""
+    try:
+        from faster_whisper import WhisperModel
+        print("🎙️ Transcribing audio with local Whisper for word-accurate sync...")
+        model = WhisperModel("base.en", device="cpu", compute_type="int8")
+        segments, _ = model.transcribe(str(media_path.resolve()), word_timestamps=True)
         words_data: List[Dict[str, Any]] = []
-
-        for s in raw_snippets:
-            tokens = [t.strip() for t in s["text"].split() if t.strip()]
-            if not tokens:
+        for s in segments:
+            if not s.words:
                 continue
-
-            # Calculate relative timestamps with lead offset to sync perfectly with spoken voice
-            rel_start = max(0.0, s["start"] - clip_start_sec - CAPTION_LEAD_OFFSET)
-            rel_end = max(0.1, s["end"] - clip_start_sec - CAPTION_LEAD_OFFSET)
-            rel_end = min(clip_duration, rel_end)
-            if rel_end <= rel_start:
-                continue
-
-            chunk_duration = max(0.2, rel_end - rel_start)
-            per_word_duration = chunk_duration / len(tokens)
-
-            for idx, token in enumerate(tokens):
-                cleaned = clean_word(token)
+            for w in s.words:
+                cleaned = clean_word(w.word)
                 if not cleaned:
                     continue
-                w_start = rel_start + (idx * per_word_duration)
-                w_end = min(clip_duration, w_start + per_word_duration)
                 words_data.append({
                     "word": cleaned,
-                    "start": round(w_start, 3),
-                    "end": round(w_end, 3)
+                    "start": round(max(0.0, w.start), 3),
+                    "end": round(max(0.1, w.end), 3)
                 })
 
-        # Strict monotonicity pass: Guarantee zero overlap across all consecutive words
+        # Strict monotonicity pass
         for i in range(len(words_data)):
             if i > 0 and words_data[i]["start"] < words_data[i - 1]["end"]:
                 words_data[i]["start"] = words_data[i - 1]["end"]
@@ -142,8 +107,103 @@ def extract_subtitles_from_youtube(
 
         return words_data
     except Exception as e:
-        print(f"⚠️  Could not fetch YouTube transcript: {e}")
+        print(f"⚠️ Local Whisper transcription notice: {e}")
         return []
+
+def extract_subtitles_from_youtube(
+    video_id: str,
+    clip_start_sec: float,
+    clip_end_sec: float,
+    local_clip_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """
+    Fetches official or auto-generated YouTube subtitles and extracts word-level timings.
+    If YouTube transcript is unavailable or blocked, falls back seamlessly to local Whisper!
+    """
+    transcript = get_cached_or_fetch_transcript(video_id)
+    if not transcript and local_clip_path and local_clip_path.exists():
+        # Immediate fallback to local Whisper
+        return extract_subtitles_with_whisper(local_clip_path)
+
+    if not transcript:
+        return []
+
+    raw_snippets = []
+    for item in transcript:
+        snippet_start = float(item["start"])
+        snippet_dur = float(item["dur"])
+        snippet_end = snippet_start + snippet_dur
+
+        if snippet_end < clip_start_sec or snippet_start > clip_end_sec:
+            continue
+
+        raw_text = item["text"].replace("\n", " ").strip()
+        raw_text = re.sub(r"\[.*?\]", "", raw_text).strip()
+        raw_text = re.sub(r"^\s*-\s*", "", raw_text).strip()
+        if not raw_text:
+            continue
+
+        raw_snippets.append({
+            "start": snippet_start,
+            "dur": snippet_dur,
+            "text": raw_text
+        })
+
+    if not raw_snippets:
+        if local_clip_path and local_clip_path.exists():
+            return extract_subtitles_with_whisper(local_clip_path)
+        return []
+
+    # Sort snippets chronologically
+    raw_snippets.sort(key=lambda s: s["start"])
+
+    # Truncate overlapping ends across consecutive snippets
+    for i in range(len(raw_snippets)):
+        st = raw_snippets[i]["start"]
+        if i + 1 < len(raw_snippets):
+            raw_snippets[i]["end"] = min(st + raw_snippets[i]["dur"], raw_snippets[i + 1]["start"])
+        else:
+            raw_snippets[i]["end"] = st + raw_snippets[i]["dur"]
+        if raw_snippets[i]["end"] <= st:
+            raw_snippets[i]["end"] = st + 0.5
+
+    clip_duration = clip_end_sec - clip_start_sec
+    words_data: List[Dict[str, Any]] = []
+
+    for s in raw_snippets:
+        tokens = [t.strip() for t in s["text"].split() if t.strip()]
+        if not tokens:
+            continue
+
+        rel_start = max(0.0, s["start"] - clip_start_sec - CAPTION_LEAD_OFFSET)
+        rel_end = max(0.1, s["end"] - clip_start_sec - CAPTION_LEAD_OFFSET)
+        rel_end = min(clip_duration, rel_end)
+        if rel_end <= rel_start:
+            continue
+
+        chunk_duration = max(0.2, rel_end - rel_start)
+        per_word_duration = chunk_duration / len(tokens)
+
+        for idx, token in enumerate(tokens):
+            cleaned = clean_word(token)
+            if not cleaned:
+                continue
+            w_start = rel_start + (idx * per_word_duration)
+            w_end = min(clip_duration, w_start + per_word_duration)
+            words_data.append({
+                "word": cleaned,
+                "start": round(w_start, 3),
+                "end": round(w_end, 3)
+            })
+
+    # Strict monotonicity pass
+    for i in range(len(words_data)):
+        if i > 0 and words_data[i]["start"] < words_data[i - 1]["end"]:
+            words_data[i]["start"] = words_data[i - 1]["end"]
+        if words_data[i]["end"] <= words_data[i]["start"]:
+            words_data[i]["end"] = round(words_data[i]["start"] + 0.2, 3)
+
+    return words_data
 
 def chunk_words(words: List[Dict[str, Any]], max_words_per_chunk: int = 2) -> List[List[Dict[str, Any]]]:
     """Groups words into short, rapid bursts (1-2 words) for mobile short retention."""

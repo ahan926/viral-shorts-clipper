@@ -1,6 +1,7 @@
 """Video composition engine for converting landscape creator clips into 9:16 vertical YouTube Shorts."""
 import subprocess
 import shutil
+import re
 from pathlib import Path
 from typing import Optional
 import imageio_ffmpeg
@@ -19,9 +20,16 @@ def get_ffmpeg_binary() -> str:
     """Gets the path to the ffmpeg executable."""
     return imageio_ffmpeg.get_ffmpeg_exe()
 
-def wrap_hook_text(text: str, max_chars_per_line: int = 24) -> str:
-    """Wraps long hook titles so they fit cleanly inside the vertical canvas."""
-    words = text.strip().upper().split()
+def format_hook_banner(text: str, max_chars_per_line: int = 22, max_lines: int = 3) -> tuple[str, int, int]:
+    """
+    Wraps and formats hook titles with word-safe boundaries and dynamic font scaling.
+    Returns: (formatted_text_with_newline_codes, font_size, pos_y)
+    """
+    # Clean text: remove excessive whitespace, normalize quotes
+    clean_text = " ".join(text.strip().split())
+    clean_text = clean_text.replace("’", "'").replace("“", '"').replace("”", '"')
+    
+    words = clean_text.upper().split()
     lines = []
     curr = []
     curr_len = 0
@@ -35,7 +43,28 @@ def wrap_hook_text(text: str, max_chars_per_line: int = 24) -> str:
             curr_len += len(w) + 1
     if curr:
         lines.append(" ".join(curr))
-    return "\\N".join(lines[:2])
+
+    # If exceeding max_lines, safely combine or truncate at whole word
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        # Ensure the last line ends cleanly without trailing punctuation
+        last_line = re.sub(r"[,;:\-\.]+$", "", lines[-1]).strip()
+        lines[-1] = last_line + "..."
+
+    num_lines = len(lines)
+    # Dynamic font scaling so long titles never overflow off-screen
+    if num_lines == 1:
+        font_size = 50
+        pos_y = 250
+    elif num_lines == 2:
+        font_size = 42
+        pos_y = 230
+    else:
+        font_size = 34
+        pos_y = 205
+
+    formatted_text = "\\N".join(lines)
+    return formatted_text, font_size, pos_y
 
 def append_hook_to_ass(ass_path: Path, hook_text: str, duration_sec: float) -> None:
     """Adds a stylish, high-contrast hook title card to the ASS subtitle file."""
@@ -43,16 +72,20 @@ def append_hook_to_ass(ass_path: Path, hook_text: str, duration_sec: float) -> N
         return
 
     content = ass_path.read_text(encoding="utf-8")
+    formatted_hook, font_size, pos_y = format_hook_banner(hook_text)
     
     # Define Hook Style with bold high-contrast outline and dark box shadow
     hook_style = (
-        f"Style: HookStyle,{HOOK_FONT},{HOOK_FONT_SIZE},"
+        f"Style: HookStyle,{HOOK_FONT},{font_size},"
         "&H00FFFFFF&,&H0000FFFF&,&H00000000&,&H90000000,"
         "-1,0,0,0,100,100,1,0,1,5,3,5,0,0,0,1\n"
     )
     
     if "[V4+ Styles]" in content and "HookStyle" not in content:
         content = content.replace("[Events]", f"{hook_style}\n[Events]")
+    elif "HookStyle" in content:
+        # Replace existing HookStyle with dynamically sized style
+        content = re.sub(r"Style: HookStyle[^\n]*\n", f"{hook_style}", content)
 
     # Calculate end time string
     hrs = int(duration_sec // 3600)
@@ -61,9 +94,8 @@ def append_hook_to_ass(ass_path: Path, hook_text: str, duration_sec: float) -> N
     centis = int(round((duration_sec - int(duration_sec)) * 100))
     end_str = f"{hrs}:{mins:02d}:{secs:02d}.{centis:02d}"
 
-    # Hook dialogue line centered near top (Y=HOOK_POS_Y) with auto line wrapping
-    formatted_hook = wrap_hook_text(hook_text)
-    hook_dialogue = f"Dialogue: 2,0:00:00.00,{end_str},HookStyle,,0,0,0,,{{\\pos(540,{HOOK_POS_Y})}}{formatted_hook}\n"
+    # Hook dialogue line centered near top (Y=pos_y) with auto line wrapping
+    hook_dialogue = f"Dialogue: 2,0:00:00.00,{end_str},HookStyle,,0,0,0,,{{\\pos(540,{pos_y})}}{formatted_hook}\n"
 
     content += f"\n{hook_dialogue}"
     ass_path.write_text(content, encoding="utf-8")

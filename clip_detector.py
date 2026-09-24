@@ -2,10 +2,12 @@
 Analyzes YouTube engagement heatmaps (most-replayed curve), video chapters,
 and transcripts to identify high-retention viral moments for YouTube Shorts.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import math
 import re
-import config
+import json
+from pathlib import Path
+from config import CACHE_DIR
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -35,16 +37,78 @@ VIRAL_TOPIC_KEYWORDS = [
 
 COMEDY_VIRAL_KEYWORDS = [
     # Laughter & Amusement
-    "laugh", "laughter", "laughing", "crying", "tears", "dead", "lmao", "lmfao",
+    "laughter", "laugh", "laughing", "crying", "tears", "dead", "lmao", "lmfao",
     "hahaha", "cant breathe", "can't breathe", "dying", "funny", "hilarious",
-    # Streamer Shock, Rage & Catchphrases
+    # Streamer Shock, Disbelief & Rage
     "aint no way", "ain't no way", "bro what", "what did you say", "chat is this real",
     "are you serious", "are you kidding me", "stop the cap", "no way no way",
     "hold on hold on", "wait wait wait", "look at this dude", "who is that", "what is that",
     "rage", "screaming", "freak out", "crash out", "slams desk", "banned", "troll", "trolling",
-    "jump scare", "scared", "cooked", "roasted", "caught in 4k", "sus", "bruh", "nahhh",
-    "speed crashes", "barking", "what's up brother", "slap", "fight", "freaking out", "bro what are you doing"
+    "jump scare", "scared", "cooked", "roasted", "caught in 4k", "bruh", "nahhh",
+    "what's up brother", "slap", "fight", "freaking out", "what the fuck", "what the hell",
+    "oh my god", "holy shit", "loses it", "devil's lettuce", "hang themselves"
 ]
+
+def count_keyword_matches(text: str, keywords: List[str]) -> int:
+    """Counts whole-word occurrences of keywords to prevent false substring matches (e.g. 'sus' in 'Jesus')."""
+    text_lower = text.lower()
+    count = 0
+    for kw in keywords:
+        pattern = r'\b' + re.escape(kw.lower()) + r'\b'
+        if re.search(pattern, text_lower):
+            count += 1
+    return count
+
+def truncate_word_safe(text: str, max_chars: int = 42) -> str:
+    """Truncates text at whole-word boundaries without chopping words in half."""
+    clean = re.sub(r"\[.*?\]", "", text)
+    clean = " ".join(clean.strip().split())
+    if len(clean) <= max_chars:
+        return clean.strip(" ,;:-.")
+    chopped = clean[:max_chars]
+    last_space = chopped.rfind(" ")
+    if last_space > 15:
+        chopped = chopped[:last_space]
+    return chopped.strip(" ,;:-.")
+
+def generate_smart_hook(
+    video_title: str,
+    creator_name: Optional[str] = None,
+    context_text: Optional[str] = None,
+    mode: str = "viral"
+) -> str:
+    """
+    Generates a punchy, human-styled 3-6 word viral hook banner for mobile Shorts.
+    Never truncates words mid-syllable, and formats with high-converting emojis.
+    """
+    clean_t = re.sub(r"(?i)\s*(\||\-|\—)\s*(asmongold tv|asmongold|by asmonboy|stream vod|full stream|episode \d+|ep \d+|part \d+|twitch|youtube).*", "", video_title).strip()
+    clean_t = re.sub(r"\[.*?\]|\(.*?\)", "", clean_t).strip()
+    clean_t = " ".join(clean_t.split())
+
+    viral_signals = [
+        "loses it", "funniest", "best video", "cant believe", "can't believe",
+        "insane", "crazy", "rage", "crying", "dies laughing", "what is this",
+        "reacts", "worst", "fails", "exposed", "caught", "screaming", "unbelievable"
+    ]
+    has_strong_title = any(sig in clean_t.lower() for sig in viral_signals)
+
+    if has_strong_title and len(clean_t) >= 10:
+        hook_candidate = truncate_word_safe(clean_t, max_chars=58)
+    elif context_text and len(context_text) >= 8:
+        hook_candidate = truncate_word_safe(context_text, max_chars=55)
+    else:
+        hook_candidate = truncate_word_safe(clean_t or "VIRAL MOMENT", max_chars=55)
+
+    if creator_name and creator_name.lower() not in hook_candidate.lower() and len(hook_candidate) < 26:
+        hook_candidate = f"{creator_name.upper()}: {hook_candidate}"
+
+    hook_candidate = hook_candidate.upper().strip(" ,;:-.")
+    has_emoji = any(char in hook_candidate for char in ["💀", "😂", "😭", "🤯", "🔥", "👀"])
+    if not has_emoji:
+        emoji = "😂" if mode == "funny" else "🤯"
+        hook_candidate = f"{hook_candidate} {emoji}"
+
+    return hook_candidate
 
 def extract_video_info(url_or_id: str) -> Dict[str, Any]:
     """Fetches video metadata including heatmap and chapters without downloading media."""
@@ -58,9 +122,17 @@ def extract_video_info(url_or_id: str) -> Dict[str, Any]:
         return info
 
 def fetch_transcript_safe(video_id: str) -> List[Dict[str, Any]]:
-    """Safely retrieves raw transcript snippets as simple dictionaries."""
+    """Safely retrieves raw transcript snippets as simple dictionaries with disk caching."""
     if not video_id:
         return []
+
+    cache_file = CACHE_DIR / "transcripts" / f"{video_id}.json"
+    if cache_file.exists():
+        try:
+            return json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
     try:
         api = YouTubeTranscriptApi()
         t_list = api.list(video_id)
@@ -75,7 +147,7 @@ def fetch_transcript_safe(video_id: str) -> List[Dict[str, Any]]:
                 chosen = all_t[0]
         if chosen:
             raw = chosen.fetch()
-            return [
+            data = [
                 {
                     "start": float(x.start),
                     "dur": float(x.duration),
@@ -83,6 +155,9 @@ def fetch_transcript_safe(video_id: str) -> List[Dict[str, Any]]:
                 }
                 for x in raw
             ]
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(data), encoding="utf-8")
+            return data
     except Exception:
         pass
     return []
@@ -109,13 +184,14 @@ def snap_to_sentence_context(
     hook_triggers = [
         "wait", "bro", "look", "why", "what", "how", "did", "are you", "aint no way",
         "chat", "so", "listen", "can i", "let me", "i said", "he said", "she said",
-        "no way", "hold up", "who", "when", "tell me"
+        "no way", "hold up", "who", "when", "tell me", "watch this", "somebody",
+        "name three", "okay", "jesus christ", "did you say"
     ]
 
-    # Look for the natural setup sentence in window [target_start - 14s, target_start + 4s]
+    # Look for the natural setup sentence in expanded window [target_start - 20s, target_start + 4s]
     for i, s in enumerate(snippets):
         st = s["start"]
-        if target_start - 14.0 <= st <= target_start + 4.0:
+        if target_start - 20.0 <= st <= target_start + 4.0:
             score = 0.0
             if i > 0:
                 prev = snippets[i - 1]
@@ -132,18 +208,22 @@ def snap_to_sentence_context(
             first_words = s["text"].lower().split()[:3]
             fw_str = " ".join(first_words)
             if any(fw_str.startswith(tr) for tr in hook_triggers):
-                score += 3.0
+                score += 3.5
+
+            # Question marks in snippet signify setup
+            if "?" in s["text"]:
+                score += 2.0
 
             # Closeness penalty
             dist = abs(st - target_start)
-            score -= (dist * 0.25)
+            score -= (dist * 0.20)
 
             if score > best_score:
                 best_score = score
                 best_start = st
                 clean_snippet = re.sub(r"\[.*?\]", "", s["text"]).strip()
                 if len(clean_snippet) > 8:
-                    context_text = clean_snippet[:35].upper()
+                    context_text = truncate_word_safe(clean_snippet, max_chars=40)
 
     # Determine optimal end time matching a completed sentence
     desired_end = best_start + clip_duration
@@ -152,10 +232,10 @@ def snap_to_sentence_context(
 
     for s in snippets:
         s_end = s["start"] + s["dur"]
-        if desired_end - 5.0 <= s_end <= desired_end + 5.0:
+        if desired_end - 6.0 <= s_end <= desired_end + 6.0:
             score = 0.0
             if any(s["text"].endswith(p) for p in [".", "?", "!"]):
-                score += 3.5
+                score += 4.0
             dist = abs(s_end - desired_end)
             score -= (dist * 0.2)
             if score > end_score:
@@ -197,10 +277,10 @@ def detect_segments_from_heatmap(
     if not heatmap:
         return []
 
-    # Filter out initial video intro (first 2 minutes) for videos > 4 minutes
+    # Filter out initial video intro (first 2.5 minutes) for videos > 5 minutes
     candidates = []
-    min_start_cutoff = 120.0 if total_duration > 240 else 20.0
-    max_end_cutoff = max(min_start_cutoff + clip_duration, total_duration - 45.0)
+    min_start_cutoff = 150.0 if total_duration > 300 else 15.0
+    max_end_cutoff = max(min_start_cutoff + clip_duration, total_duration - 35.0)
 
     for point in heatmap:
         st = float(point.get("start_time", 0.0))
@@ -211,12 +291,9 @@ def detect_segments_from_heatmap(
             if mode == "funny" and snippets:
                 comedy_hits = 0
                 for s in snippets:
-                    if st - 15.0 <= s["start"] <= st + 25.0:
-                        s_lower = s["text"].lower()
-                        for kw in COMEDY_VIRAL_KEYWORDS:
-                            if kw in s_lower:
-                                comedy_hits += 1
-                score += (min(10, comedy_hits) * 0.4)
+                    if st - 20.0 <= s["start"] <= st + 25.0:
+                        comedy_hits += count_keyword_matches(s["text"], COMEDY_VIRAL_KEYWORDS)
+                score += (min(10, comedy_hits) * 0.75)
 
             candidates.append({"start_time": st, "value": score, "raw_heat": val})
 
@@ -246,8 +323,8 @@ def detect_segments_from_heatmap(
     for idx, peak in enumerate(selected_peaks):
         peak_time = peak["start_time"]
         
-        # Position peak ~10-15s into the Short for optimal hook & buildup
-        ideal_start = max(0.0, peak_time - (clip_duration * 0.35))
+        # Position peak ~45% into the Short for optimal setup & reaction delivery
+        ideal_start = max(0.0, peak_time - (clip_duration * 0.45))
         if ideal_start + clip_duration > total_duration:
             ideal_start = max(0.0, total_duration - clip_duration)
             
@@ -387,22 +464,16 @@ def detect_segments_from_transcript(
 
         # Laughter & Comedy weight
         if mode == "funny":
-            for c_kw in COMEDY_VIRAL_KEYWORDS:
-                if c_kw in raw_str:
-                    score += 4.0
+            score += count_keyword_matches(raw_str, COMEDY_VIRAL_KEYWORDS) * 4.5
         else:
-            for c_kw in COMEDY_VIRAL_KEYWORDS[:12]:
-                if c_kw in raw_str:
-                    score += 2.0
+            score += count_keyword_matches(raw_str, COMEDY_VIRAL_KEYWORDS[:12]) * 2.5
 
         # Questions and excitement
         score += raw_str.count("?") * 2.0
         score += raw_str.count("!") * 2.5
 
         # Viral topic triggers
-        for kw in VIRAL_TOPIC_KEYWORDS:
-            if kw in raw_str:
-                score += 2.0
+        score += count_keyword_matches(raw_str, VIRAL_TOPIC_KEYWORDS) * 2.0
 
         # Speech pace (words per second) - streamers talk fast during intense/funny moments
         wps = len(text_tokens) / max(1.0, clip_duration)
@@ -492,11 +563,32 @@ def get_viral_segments(
                         s["title"] = context_hook
             return segments
 
-    # 4. Fallback: Golden Ratio intervals (avoiding 00:00) snapped to sentence context
+    # 4. Fallback: Snapped intervals (safe for both short and long videos)
     segments = []
-    splits = [0.35, 0.55, 0.72, 0.22]
+    if total_duration <= clip_duration + 5.0:
+        st = 0.0
+        et = total_duration
+        if snippets:
+            st, et, context_hook = snap_to_sentence_context(snippets, st, clip_duration, total_duration)
+            title = context_hook
+        else:
+            title = None
+        segments.append({
+            "index": 1,
+            "start": round(st, 2),
+            "end": round(et, 2),
+            "duration": round(et - st, 2),
+            "score": 0.8,
+            "title": title,
+            "method": "short_video_direct"
+        })
+        return segments
+
+    splits = [0.35, 0.55, 0.72, 0.15]
+    min_start_limit = 30.0 if total_duration > 180 else 0.0
     for i in range(min(count, len(splits))):
-        st = max(90.0, (total_duration * splits[i]) - (clip_duration / 2))
+        target_s = max(0.0, (total_duration - clip_duration) * splits[i])
+        st = max(min_start_limit, target_s)
         et = min(total_duration, st + clip_duration)
         if snippets:
             st, et, context_hook = snap_to_sentence_context(
